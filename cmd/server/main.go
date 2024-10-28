@@ -39,36 +39,36 @@ func mainPage(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	type_metric := req.PathValue("type")
-	name_metric := req.PathValue("name")
-	val_metric := req.PathValue("val")
+	typeMetric := req.PathValue("type")
+	nameMetric := req.PathValue("name")
+	valMetric := req.PathValue("val")
 
-	if name_metric == "" {
+	if nameMetric == "" {
 		http.Error(res, "", http.StatusNotFound)
 		return
 	}
 
-	if type_metric != "gauge" && type_metric != "counter" {
+	if typeMetric != "gauge" && typeMetric != "counter" {
 		http.Error(res, "", http.StatusBadRequest)
 		return
 	}
 
-	switch type_metric {
+	switch typeMetric {
 	case "gauge":
-		_, err := strconv.ParseFloat(val_metric, 64)
+		_, err := strconv.ParseFloat(valMetric, 64)
 		if err != nil {
 			http.Error(res, "", http.StatusBadRequest)
 			return
 		}
 	case "counter":
-		_, err := strconv.ParseInt(val_metric, 10, 64)
+		_, err := strconv.ParseInt(valMetric, 10, 64)
 		if err != nil {
 			http.Error(res, "", http.StatusBadRequest)
 			return
 		}
 	}
 
-	storage.Add(type_metric, name_metric, val_metric)
+	storage.Add(typeMetric, nameMetric, valMetric)
 
 	fmt.Println("counter", storage.Counter)
 	fmt.Println("gauge", storage.Gauge)
