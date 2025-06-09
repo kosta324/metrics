@@ -93,7 +93,7 @@ func TestMainPage(t *testing.T) {
 
 			req := httptest.NewRequest(tt.method, tt.url, nil)
 			w := httptest.NewRecorder()
-			
+
 			if tt.name == "missing metric name" {
 				// вызывать напрямую без ServeMux
 				h.MainPage(w, req)
