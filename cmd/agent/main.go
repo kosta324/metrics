@@ -1,73 +1,95 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"runtime"
+	"strconv"
 	"time"
-
-	"github.com/kosta324/metrics.git/internal/storage"
 )
 
-type Client struct {
-	PollInterval   int
-	ReportInterval int
-	HostAddress    string
-	Repo           storage.Repositories
-}
+const (
+	serverAddress  = "http://localhost:8080"
+	pollInterval   = 2 * time.Second
+	reportInterval = 10 * time.Second
+)
 
-func (client *Client) Run() {
-	start := time.Now()
-	var stat runtime.MemStats
-	var interval int
-	for {
-		client.poll(&stat)
-		client.Repo.Increase()
-		time.Sleep(time.Duration(client.PollInterval * int(time.Second)))
-		interval = int(time.Until(start).Abs().Seconds())
-		if interval >= client.ReportInterval {
-			client.report()
-			start = time.Now()
-		}
-	}
-}
-
-func (client *Client) poll(stat *runtime.MemStats) {
-	runtime.ReadMemStats(stat)
-	client.Repo.Add(stat)
-}
-
-func (client *Client) report() {
-	fmt.Printf("Metric = %v \n", client.Repo)
-	const counterType = "text/plain"
-	reader := bytes.NewReader([]byte(""))
-	for name, val := range client.Repo.GetGauge() {
-		_, err := http.Post(fmt.Sprintf("%s/update/%s/%s/%f", client.HostAddress, "gauge", name, val), counterType, reader)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-	}
-	for name, val := range client.Repo.GetCounter() {
-		_, err := http.Post(fmt.Sprintf("%s/update/%s/%s/%d", client.HostAddress, "counter", name, val), counterType, reader)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-	}
-}
+var pollCount int64
 
 func main() {
-	const pollInterval = 2
-	const reportInterval = 10
-	const hostAddress = "http://localhost:8080"
-	repo := storage.InitStorage()
-	client := Client{
-		PollInterval:   pollInterval,
-		ReportInterval: reportInterval,
-		HostAddress:    hostAddress,
-		Repo:           &repo,
+	// Таймеры для poll и report
+	pollTicker := time.NewTicker(pollInterval)
+	reportTicker := time.NewTicker(reportInterval)
+
+	metrics := make(map[string]float64)
+
+	for {
+		select {
+		case <-pollTicker.C:
+			pollCount++
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
+			metrics["Alloc"] = float64(m.Alloc)
+			metrics["BuckHashSys"] = float64(m.BuckHashSys)
+			metrics["Frees"] = float64(m.Frees)
+			metrics["GCCPUFraction"] = m.GCCPUFraction
+			metrics["GCSys"] = float64(m.GCSys)
+			metrics["HeapAlloc"] = float64(m.HeapAlloc)
+			metrics["HeapIdle"] = float64(m.HeapIdle)
+			metrics["HeapInuse"] = float64(m.HeapInuse)
+			metrics["HeapObjects"] = float64(m.HeapObjects)
+			metrics["HeapReleased"] = float64(m.HeapReleased)
+			metrics["HeapSys"] = float64(m.HeapSys)
+			metrics["LastGC"] = float64(m.LastGC)
+			metrics["Lookups"] = float64(m.Lookups)
+			metrics["MCacheInuse"] = float64(m.MCacheInuse)
+			metrics["MCacheSys"] = float64(m.MCacheSys)
+			metrics["MSpanInuse"] = float64(m.MSpanInuse)
+			metrics["MSpanSys"] = float64(m.MSpanSys)
+			metrics["Mallocs"] = float64(m.Mallocs)
+			metrics["NextGC"] = float64(m.NextGC)
+			metrics["NumForcedGC"] = float64(m.NumForcedGC)
+			metrics["NumGC"] = float64(m.NumGC)
+			metrics["OtherSys"] = float64(m.OtherSys)
+			metrics["PauseTotalNs"] = float64(m.PauseTotalNs)
+			metrics["StackInuse"] = float64(m.StackInuse)
+			metrics["StackSys"] = float64(m.StackSys)
+			metrics["Sys"] = float64(m.Sys)
+			metrics["TotalAlloc"] = float64(m.TotalAlloc)
+
+			metrics["RandomValue"] = rand.Float64()
+
+		case <-reportTicker.C:
+			for name, val := range metrics {
+				sendMetric("gauge", name, fmt.Sprintf("%f", val))
+			}
+			sendMetric("counter", "PollCount", strconv.FormatInt(pollCount, 10))
+		}
 	}
-	client.Run()
+}
+
+func sendMetric(metricType, name, value string) {
+	url := fmt.Sprintf("%s/update/%s/%s/%s", serverAddress, metricType, name, value)
+
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		fmt.Printf("error creating request: %v\n", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "text/plain")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("error sending metric %s: %v\n", name, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("server returned non-OK for %s: %d\n", name, resp.StatusCode)
+	}
 }

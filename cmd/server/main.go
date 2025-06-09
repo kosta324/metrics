@@ -1,25 +1,23 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/kosta324/metrics.git/internal/handlers"
+	"github.com/kosta324/metrics.git/internal/storage"
 )
 
 func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+	repo := storage.NewMemStorage()
+	handler := handlers.NewHandler(repo)
 
-func run() error {
-	repo := handlers.InitStorage()
-	handler := handlers.NewHandler{
-		Repo: &repo,
-	}
 	mux := http.NewServeMux()
-	handler.Handle(mux)
-	fmt.Printf("Server run")
-	return http.ListenAndServe(`:8080`, mux)
+	mux.HandleFunc(`/update/{type}/{name}/{val}`, handler.MainPage)
+
+	log.Println("Server running on :8080")
+	err := http.ListenAndServe(":8080", mux)
+	if err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
 }

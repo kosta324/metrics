@@ -1,80 +1,65 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+
+	"github.com/kosta324/metrics.git/internal/storage"
 )
 
-type Repositories interface {
-	Add(mType string, name string, value float64) error
+type Handler struct {
+	Repo storage.Repository
 }
 
-type gauge float64
-type counter int64
-
-type memStorage struct {
-	Gauge   map[string]gauge
-	Counter map[string]counter
+func NewHandler(repo storage.Repository) *Handler {
+	return &Handler{Repo: repo}
 }
 
-func InitStorage() memStorage {
-	return memStorage{
-		Gauge:   make(map[string]gauge),
-		Counter: make(map[string]counter),
+func (h *Handler) MainPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-}
 
-func (metric *memStorage) Add(mType string, name string, value float64) error {
-	switch mType {
+	// Ожидается /update/{type}/{name}/{value}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) != 5 || parts[1] != "update" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	metricType := parts[2]
+	name := parts[3]
+	value := parts[4]
+
+	if name == "" {
+		http.Error(w, "metric name is required", http.StatusBadRequest)
+		return
+	}
+
+	switch metricType {
 	case "gauge":
-		metric.Gauge[name] = gauge(value)
-	case "counter":
-		metric.Counter[name] += counter(value)
-	}
-
-	return nil
-}
-
-func Post(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodPost {
-			res.WriteHeader(http.StatusMethodNotAllowed)
+		if _, err := strconv.ParseFloat(value, 64); err != nil {
+			http.Error(w, "invalid gauge value", http.StatusBadRequest)
 			return
 		}
-
-		next.ServeHTTP(res, req)
-	})
-}
-
-type NewHandler struct {
-	Repo Repositories
-}
-
-func (h *NewHandler) update(res http.ResponseWriter, req *http.Request) {
-	typeMetric := req.PathValue("type")
-	nameMetric := req.PathValue("name")
-	valMetric := req.PathValue("val")
-	var val float64
-
-	if nameMetric == "" {
-		res.WriteHeader(http.StatusNotFound)
-		return
-	}
-	if typeMetric != "gauge" && typeMetric != "counter" {
-		res.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	val, err := strconv.ParseFloat(valMetric, 64)
-	if err != nil {
-		res.WriteHeader(http.StatusBadRequest)
+	case "counter":
+		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+			http.Error(w, "invalid counter value", http.StatusBadRequest)
+			return
+		}
+	default:
+		http.Error(w, "unsupported metric type", http.StatusBadRequest)
 		return
 	}
 
-	h.Repo.Add(typeMetric, nameMetric, val)
+	if err := h.Repo.Add(metricType, name, value); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
-	res.WriteHeader(http.StatusOK)
-}
-
-func (h *NewHandler) Handle(mux *http.ServeMux) {
-	mux.Handle("/update/", Post(http.HandlerFunc(h.update)))
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "OK")
 }
