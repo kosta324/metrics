@@ -9,7 +9,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestUpdateMetric(t *testing.T) {
@@ -86,14 +85,14 @@ func TestUpdateMetric(t *testing.T) {
 		},
 	}
 
+	repo := storage.NewMemStorage()
+	h := NewHandler(repo)
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := storage.NewMemStorage()
-			h := NewHandler(repo)
-
-			r := chi.NewRouter()
-			h.RegisterRoutes(r)
-
 			req := httptest.NewRequest(tt.method, tt.url, nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
@@ -106,72 +105,97 @@ func TestUpdateMetric(t *testing.T) {
 			if tt.want.contentType != "" {
 				assert.Equal(t, tt.want.contentType, res.Header.Get("Content-Type"))
 			}
-
-			_, err := io.ReadAll(res.Body)
-			require.NoError(t, err)
 		})
 	}
 }
 
-func TestGetAndListMetrics(t *testing.T) {
+func setupRouterWithTestData() http.Handler {
 	repo := storage.NewMemStorage()
-	_ = repo.Add("gauge", "HeapAlloc", "123.45")
+	_ = repo.Add("gauge", "GaugeTwoDecimals", "603057.87")
+	_ = repo.Add("gauge", "GaugeThreeDecimals", "550386.837")
 	_ = repo.Add("counter", "PollCount", "7")
 
 	h := NewHandler(repo)
+
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
+	return r
+}
 
-	t.Run("GET existing gauge metric", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/value/gauge/HeapAlloc", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
+func TestGetMetrics(t *testing.T) {
+	type want struct {
+		code     int
+		body     string
+		contains string
+	}
 
-		res := w.Result()
-		defer res.Body.Close()
+	tests := []struct {
+		name string
+		url  string
+		want want
+	}{
+		{
+			name: "GET existing gauge with 2 decimals",
+			url:  "/value/gauge/GaugeTwoDecimals",
+			want: want{
+				code: http.StatusOK,
+				body: "603057.87\n",
+			},
+		},
+		{
+			name: "GET existing gauge with 3 decimals",
+			url:  "/value/gauge/GaugeThreeDecimals",
+			want: want{
+				code: http.StatusOK,
+				body: "550386.837\n",
+			},
+		},
+		{
+			name: "GET existing counter",
+			url:  "/value/counter/PollCount",
+			want: want{
+				code: http.StatusOK,
+				body: "7\n",
+			},
+		},
+		{
+			name: "GET non-existing metric",
+			url:  "/value/gauge/UnknownMetric",
+			want: want{
+				code: http.StatusNotFound,
+			},
+		},
+		{
+			name: "GET / returns HTML with all metrics formatted",
+			url:  "/",
+			want: want{
+				code:     http.StatusOK,
+				contains: "<li><b>GaugeTwoDecimals</b>: 603057.87</li>",
+			},
+		},
+	}
 
-		body, _ := io.ReadAll(res.Body)
-		assert.Equal(t, http.StatusOK, res.StatusCode)
-		assert.Contains(t, string(body), "123.45")
-	})
+	router := setupRouterWithTestData()
 
-	t.Run("GET existing counter metric", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/value/counter/PollCount", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
 
-		res := w.Result()
-		defer res.Body.Close()
+			res := w.Result()
+			defer res.Body.Close()
+			body, _ := io.ReadAll(res.Body)
 
-		body, _ := io.ReadAll(res.Body)
-		assert.Equal(t, http.StatusOK, res.StatusCode)
-		assert.Contains(t, string(body), "7")
-	})
+			assert.Equal(t, tt.want.code, res.StatusCode)
 
-	t.Run("GET non-existent metric returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/value/gauge/Unknown", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		assert.Equal(t, http.StatusNotFound, res.StatusCode)
-	})
-
-	t.Run("GET / returns HTML with all metrics", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		body, _ := io.ReadAll(res.Body)
-
-		assert.Equal(t, http.StatusOK, res.StatusCode)
-		assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
-		assert.Contains(t, string(body), "HeapAlloc")
-		assert.Contains(t, string(body), "PollCount")
-	})
+			if tt.want.body != "" {
+				assert.Equal(t, tt.want.body, string(body))
+			}
+			if tt.want.contains != "" {
+				assert.Contains(t, string(body), tt.want.contains)
+				assert.NotContains(t, string(body), "603057.870")
+			}
+		})
+	}
 }

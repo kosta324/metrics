@@ -54,7 +54,7 @@ func (ms *MemStorage) Get(metricType, name string) (string, error) {
 		if !ok {
 			return "", errors.New("not found")
 		}
-		return fmt.Sprintf("%.3f", val), nil
+		return strconv.FormatFloat(float64(val), 'f', -1, 64), nil
 	case "counter":
 		val, ok := ms.Counters[name]
 		if !ok {
@@ -70,7 +70,7 @@ func (ms *MemStorage) GetAll() map[string]string {
 	result := make(map[string]string)
 
 	for k, v := range ms.Gauges {
-		result[k] = fmt.Sprintf("%f", v)
+		result[k] = strconv.FormatFloat(float64(v), 'f', -1, 64)
 	}
 	for k, v := range ms.Counters {
 		result[k] = fmt.Sprintf("%d", v)
