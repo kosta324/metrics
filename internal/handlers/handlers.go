@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
-	"strconv"
-	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/storage"
 )
 
@@ -17,49 +17,73 @@ func NewHandler(repo storage.Repository) *Handler {
 	return &Handler{Repo: repo}
 }
 
-func (h *Handler) MainPage(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) RegisterRoutes(r chi.Router) {
+	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
+	r.Get("/value/{type}/{name}", h.GetMetric)
+	r.Get("/", h.ListMetrics)
+}
+
+func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Ожидается /update/{type}/{name}/{value}
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 5 || parts[1] != "update" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	metricType := parts[2]
-	name := parts[3]
-	value := parts[4]
+	metricType := chi.URLParam(r, "type")
+	name := chi.URLParam(r, "name")
+	value := chi.URLParam(r, "value")
 
 	if name == "" {
-		http.Error(w, "metric name is required", http.StatusBadRequest)
-		return
-	}
-
-	switch metricType {
-	case "gauge":
-		if _, err := strconv.ParseFloat(value, 64); err != nil {
-			http.Error(w, "invalid gauge value", http.StatusBadRequest)
-			return
-		}
-	case "counter":
-		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-			http.Error(w, "invalid counter value", http.StatusBadRequest)
-			return
-		}
-	default:
-		http.Error(w, "unsupported metric type", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.Error(w, "metric name required", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.Repo.Add(metricType, name, value); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "OK")
+}
+
+func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
+	metricType := chi.URLParam(r, "type")
+	name := chi.URLParam(r, "name")
+
+	value, err := h.Repo.Get(metricType, name)
+	if err != nil {
+		http.Error(w, "metric not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, value)
+}
+
+func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics := h.Repo.GetAll()
+
+	tmpl := `
+		<html><body>
+		<h1>Metrics</h1>
+		<ul>
+		{{ range $key, $val := . }}
+			<li><b>{{ $key }}</b>: {{ $val }}</li>
+		{{ end }}
+		</ul>
+		</body></html>
+	`
+	t, err := template.New("metrics").Parse(tmpl)
+	if err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	t.Execute(w, metrics)
 }

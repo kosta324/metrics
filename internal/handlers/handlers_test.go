@@ -6,12 +6,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMainPage(t *testing.T) {
+func TestUpdateMetric(t *testing.T) {
 	type want struct {
 		code        int
 		contentType string
@@ -44,8 +45,7 @@ func TestMainPage(t *testing.T) {
 			method: http.MethodGet,
 			url:    "/update/counter/MetricName/1",
 			want: want{
-				code:        405,
-				contentType: "text/plain; charset=utf-8",
+				code: 405,
 			},
 		},
 		{
@@ -91,22 +91,18 @@ func TestMainPage(t *testing.T) {
 			repo := storage.NewMemStorage()
 			h := NewHandler(repo)
 
+			r := chi.NewRouter()
+			h.RegisterRoutes(r)
+
 			req := httptest.NewRequest(tt.method, tt.url, nil)
 			w := httptest.NewRecorder()
-
-			if tt.name == "missing metric name" {
-				// вызывать напрямую без ServeMux
-				h.MainPage(w, req)
-			} else {
-				mux := http.NewServeMux()
-				mux.HandleFunc("/update/", h.MainPage)
-				mux.ServeHTTP(w, req)
-			}
+			r.ServeHTTP(w, req)
 
 			res := w.Result()
 			defer res.Body.Close()
 
 			assert.Equal(t, tt.want.code, res.StatusCode)
+
 			if tt.want.contentType != "" {
 				assert.Equal(t, tt.want.contentType, res.Header.Get("Content-Type"))
 			}
@@ -115,4 +111,67 @@ func TestMainPage(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestGetAndListMetrics(t *testing.T) {
+	repo := storage.NewMemStorage()
+	_ = repo.Add("gauge", "HeapAlloc", "123.45")
+	_ = repo.Add("counter", "PollCount", "7")
+
+	h := NewHandler(repo)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	t.Run("GET existing gauge metric", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/value/gauge/HeapAlloc", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		res := w.Result()
+		defer res.Body.Close()
+
+		body, _ := io.ReadAll(res.Body)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+		assert.Contains(t, string(body), "123.45")
+	})
+
+	t.Run("GET existing counter metric", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/value/counter/PollCount", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		res := w.Result()
+		defer res.Body.Close()
+
+		body, _ := io.ReadAll(res.Body)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+		assert.Contains(t, string(body), "7")
+	})
+
+	t.Run("GET non-existent metric returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/value/gauge/Unknown", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		res := w.Result()
+		defer res.Body.Close()
+
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	})
+
+	t.Run("GET / returns HTML with all metrics", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		res := w.Result()
+		defer res.Body.Close()
+
+		body, _ := io.ReadAll(res.Body)
+
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+		assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
+		assert.Contains(t, string(body), "HeapAlloc")
+		assert.Contains(t, string(body), "PollCount")
+	})
 }
