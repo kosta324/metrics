@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -9,18 +10,23 @@ import (
 	"time"
 )
 
-const (
-	serverAddress  = "http://localhost:8080"
-	pollInterval   = 2 * time.Second
-	reportInterval = 10 * time.Second
+var (
+	serverAddress  = flag.String("a", "localhost:8080", "HTTP server address")
+	pollInterval   = flag.Int("p", 2, "Poll interval (seconds)")
+	reportInterval = flag.Int("r", 10, "Report interval (seconds)")
 )
 
 var pollCount int64
 
 func main() {
-	// Таймеры для poll и report
-	pollTicker := time.NewTicker(pollInterval)
-	reportTicker := time.NewTicker(reportInterval)
+	flag.Parse()
+	if len(flag.Args()) > 0 {
+		fmt.Printf("unknown arguments: %v\n", flag.Args())
+		return
+	}
+
+	pollTicker := time.NewTicker(time.Duration(*pollInterval) * time.Second)
+	reportTicker := time.NewTicker(time.Duration(*reportInterval) * time.Second)
 
 	metrics := make(map[string]float64)
 
@@ -71,7 +77,7 @@ func main() {
 }
 
 func sendMetric(metricType, name, value string) {
-	url := fmt.Sprintf("%s/update/%s/%s/%s", serverAddress, metricType, name, value)
+	url := fmt.Sprintf("http://%s/update/%s/%s/%s", *serverAddress, metricType, name, value)
 
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {

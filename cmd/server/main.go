@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 
@@ -10,14 +11,21 @@ import (
 )
 
 func main() {
+	addr := flag.String("a", "localhost:8080", "HTTP server address")
+
+	flag.Parse()
+	if len(flag.Args()) > 0 {
+		log.Fatalf("unknown arguments: %v", flag.Args())
+	}
+
 	repo := storage.NewMemStorage()
 	handler := handlers.NewHandler(repo)
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
 
-	log.Println("Server running on :8080")
-	err := http.ListenAndServe(":8080", r)
+	log.Printf("Server running on %s", *addr)
+	err := http.ListenAndServe(*addr, r)
 	if err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
