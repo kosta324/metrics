@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/handlers"
@@ -16,6 +17,10 @@ func main() {
 	flag.Parse()
 	if len(flag.Args()) > 0 {
 		log.Fatalf("unknown arguments: %v", flag.Args())
+	}
+
+	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+		*addr = envAddr
 	}
 
 	repo := storage.NewMemStorage()

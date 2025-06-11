@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"time"
@@ -23,6 +24,22 @@ func main() {
 	if len(flag.Args()) > 0 {
 		fmt.Printf("unknown arguments: %v\n", flag.Args())
 		return
+	}
+
+	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+		*serverAddress = envAddr
+	}
+
+	if envPoll := os.Getenv("POLL_INTERVAL"); envPoll != "" {
+		if val, err := strconv.Atoi(envPoll); err == nil {
+			*pollInterval = val
+		}
+	}
+
+	if envReport := os.Getenv("REPORT_INTERVAL"); envReport != "" {
+		if val, err := strconv.Atoi(envReport); err == nil {
+			*reportInterval = val
+		}
 	}
 
 	pollTicker := time.NewTicker(time.Duration(*pollInterval) * time.Second)
