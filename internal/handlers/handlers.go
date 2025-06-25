@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
-	"html/template"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/storage"
@@ -18,9 +20,116 @@ func NewHandler(repo storage.Repository) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
+	r.Post("/update/", h.UpdateMetricJSON)
+	r.Post("/value/", h.GetMetricJSON)
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Get("/value/{type}/{name}", h.GetMetric)
 	r.Get("/", h.ListMetrics)
+}
+
+type Metrics struct {
+	ID    string   `json:"id"`
+	MType string   `json:"type"`
+	Delta *int64   `json:"delta,omitempty"`
+	Value *float64 `json:"value,omitempty"`
+}
+
+func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var m Metrics
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = json.Unmarshal(body, &m)
+	if err != nil || m.ID == "" || m.MType == "" {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	switch m.MType {
+	case "gauge":
+		if m.Value == nil {
+			http.Error(w, "missing gauge value", http.StatusBadRequest)
+			return
+		}
+		err = h.Repo.Add("gauge", m.ID, strconv.FormatFloat(*m.Value, 'f', -1, 64))
+	case "counter":
+		if m.Delta == nil {
+			http.Error(w, "missing counter delta", http.StatusBadRequest)
+			return
+		}
+		err = h.Repo.Add("counter", m.ID, strconv.FormatInt(*m.Delta, 10))
+	default:
+		http.Error(w, "unknown metric type", http.StatusNotImplemented)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	val, getErr := h.Repo.Get(m.MType, m.ID)
+	if getErr != nil {
+		http.Error(w, getErr.Error(), http.StatusNotFound)
+		return
+	}
+
+	switch m.MType {
+	case "gauge":
+		v, err := strconv.ParseFloat(val, 64)
+		if err == nil {
+			m.Value = &v
+		}
+	case "counter":
+		v, err := strconv.ParseInt(val, 10, 64)
+		if err == nil {
+			m.Delta = &v
+		}
+	}
+
+	json.NewEncoder(w).Encode(m)
+}
+
+func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var m Metrics
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = json.Unmarshal(body, &m)
+	if err != nil || m.ID == "" || m.MType == "" {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	val, getErr := h.Repo.Get(m.MType, m.ID)
+	if getErr != nil {
+		http.Error(w, getErr.Error(), http.StatusNotFound)
+		return
+	}
+
+	switch m.MType {
+	case "gauge":
+		v, err := strconv.ParseFloat(val, 64)
+		if err == nil {
+			m.Value = &v
+		}
+	case "counter":
+		v, err := strconv.ParseInt(val, 10, 64)
+		if err == nil {
+			m.Delta = &v
+		}
+	default:
+		http.Error(w, "unknown metric type", http.StatusNotImplemented)
+		return
+	}
+
+	json.NewEncoder(w).Encode(m)
 }
 
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
@@ -65,25 +174,18 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics := h.Repo.GetAll()
-
-	tmpl := `
-		<html><body>
-		<h1>Metrics</h1>
-		<ul>
-		{{ range $key, $val := . }}
-			<li><b>{{ $key }}</b>: {{ $val }}</li>
-		{{ end }}
-		</ul>
-		</body></html>
-	`
-	t, err := template.New("metrics").Parse(tmpl)
-	if err != nil {
-		http.Error(w, "template error", http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	t.Execute(w, metrics)
+	metrics := h.Repo.GetAll()
+
+	w.Write([]byte("<html><body><h1>Metrics</h1><ul>"))
+	keys := make([]string, 0, len(metrics))
+	for k := range metrics {
+		keys = append(keys, k)
+	}
+	for _, k := range keys {
+		v := metrics[k]
+		w.Write([]byte("<li><b>" + k + "</b>: " + v + "</li>"))
+	}
+	w.Write([]byte("</ul></body></html>"))
 }

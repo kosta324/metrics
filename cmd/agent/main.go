@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -18,6 +20,13 @@ var (
 )
 
 var pollCount int64
+
+type Metrics struct {
+	ID    string   `json:"id"`
+	MType string   `json:"type"`
+	Delta *int64   `json:"delta,omitempty"`
+	Value *float64 `json:"value,omitempty"`
+}
 
 func main() {
 	flag.Parse()
@@ -47,9 +56,8 @@ func main() {
 
 	metrics := make(map[string]float64)
 
-	for {
-		select {
-		case <-pollTicker.C:
+	go func() {
+		for range pollTicker.C {
 			pollCount++
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
@@ -83,36 +91,50 @@ func main() {
 			metrics["TotalAlloc"] = float64(m.TotalAlloc)
 
 			metrics["RandomValue"] = rand.Float64()
-
-		case <-reportTicker.C:
-			for name, val := range metrics {
-				sendMetric("gauge", name, fmt.Sprintf("%f", val))
-			}
-			sendMetric("counter", "PollCount", strconv.FormatInt(pollCount, 10))
 		}
+	}()
+
+	for range reportTicker.C {
+		for name, val := range metrics {
+			m := Metrics{
+				ID:    name,
+				MType: "gauge",
+				Value: &val,
+			}
+			sendMetricJSON(m)
+		}
+		m := Metrics{
+			ID:    "PollCount",
+			MType: "counter",
+			Delta: &pollCount,
+		}
+		sendMetricJSON(m)
 	}
 }
 
-func sendMetric(metricType, name, value string) {
-	url := fmt.Sprintf("http://%s/update/%s/%s/%s", *serverAddress, metricType, name, value)
-
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+func sendMetricJSON(m Metrics) {
+	body, err := json.Marshal(m)
 	if err != nil {
 		fmt.Printf("error creating request: %v\n", err)
 		return
 	}
 
-	req.Header.Set("Content-Type", "text/plain")
+	req, err := http.NewRequest(http.MethodPost, "http://"+*serverAddress+"/update/", bytes.NewBuffer(body))
+	if err != nil {
+		fmt.Printf("error creating request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("error sending metric %s: %v\n", name, err)
+		fmt.Printf("error sending metric %s: %v\n", m.ID, err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("server returned non-OK for %s: %d\n", name, resp.StatusCode)
+		fmt.Printf("server returned non-OK for %s: %d\n", m.ID, resp.StatusCode)
 	}
 }
