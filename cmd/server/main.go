@@ -9,6 +9,7 @@ import (
 	"github.com/kosta324/metrics.git/internal/handlers"
 	"github.com/kosta324/metrics.git/internal/logger"
 	"github.com/kosta324/metrics.git/internal/storage"
+	"github.com/kosta324/metrics.git/internal/zipper"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +40,7 @@ func main() {
 
 	r := chi.NewRouter()
 
+	r.Use(zipper.GzipMiddleware)
 	r.Use(logger.WithLogging(&log))
 
 	handler.RegisterRoutes(r)

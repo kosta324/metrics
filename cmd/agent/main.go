@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -119,12 +121,24 @@ func sendMetricJSON(m Metrics) {
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, "http://"+*serverAddress+"/update/", bytes.NewBuffer(body))
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, err = gz.Write(body)
+	if err != nil {
+		fmt.Printf("error compressing request: %v\n", err)
+		return
+	}
+	gz.Close()
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+*serverAddress+"/update/", &buf)
 	if err != nil {
 		fmt.Printf("error creating request: %v\n", err)
 		return
 	}
+
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "gzip")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -134,7 +148,25 @@ func sendMetricJSON(m Metrics) {
 	}
 	defer resp.Body.Close()
 
+	var reader io.Reader = resp.Body
+
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzr, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			fmt.Printf("error decompressing response: %v\n", err)
+			return
+		}
+		defer gzr.Close()
+		reader = gzr
+	}
+
+	respBody, err := io.ReadAll(reader)
+	if err != nil {
+		fmt.Printf("error reading response body: %v\n", err)
+		return
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("server returned non-OK for %s: %d\n", m.ID, resp.StatusCode)
+		fmt.Printf("server returned non-OK for %s: %d, body: %s\n", m.ID, resp.StatusCode, string(respBody))
 	}
 }
