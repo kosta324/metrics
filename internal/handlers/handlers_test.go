@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +11,139 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestUpdateMetricJSON(t *testing.T) {
+	type want struct {
+		code int
+	}
+	tests := []struct {
+		name  string
+		input Metrics
+		want  want
+	}{
+		{
+			name: "update gauge via JSON",
+			input: Metrics{
+				ID:    "TestGauge",
+				MType: "gauge",
+				Value: func() *float64 { v := 123.456; return &v }(),
+			},
+			want: want{code: http.StatusOK},
+		},
+		{
+			name: "update counter via JSON",
+			input: Metrics{
+				ID:    "TestCounter",
+				MType: "counter",
+				Delta: func() *int64 { d := int64(42); return &d }(),
+			},
+			want: want{code: http.StatusOK},
+		},
+	}
+
+	repo := storage.NewMemStorage()
+	h := NewHandler(repo)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.input)
+			req := httptest.NewRequest(http.MethodPost, "/update/", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+			assert.Equal(t, tt.want.code, res.StatusCode)
+		})
+	}
+}
+
+func TestGetMetricJSON(t *testing.T) {
+	type want struct {
+		code  int
+		value float64
+	}
+	tests := []struct {
+		name  string
+		input Metrics
+		want  want
+	}{
+		{
+			name: "get gauge via JSON",
+			input: Metrics{
+				ID:    "GaugeTwoDecimals",
+				MType: "gauge",
+			},
+			want: want{
+				code:  http.StatusOK,
+				value: 603057.87,
+			},
+		},
+		{
+			name: "get existing counter",
+			input: Metrics{
+				ID:    "PollCount",
+				MType: "counter",
+			},
+			want: want{
+				code:  http.StatusOK,
+				value: 7,
+			},
+		},
+		{
+			name: "get non-existing metric",
+			input: Metrics{
+				ID:    "UnknownMetric",
+				MType: "gauge",
+			},
+			want: want{
+				code:  http.StatusNotFound,
+				value: 0,
+			},
+		},
+	}
+
+	repo := storage.NewMemStorage()
+	_ = repo.Add("gauge", "GaugeTwoDecimals", "603057.87")
+	_ = repo.Add("counter", "PollCount", "7")
+	h := NewHandler(repo)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.input)
+			req := httptest.NewRequest(http.MethodPost, "/value/", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+			assert.Equal(t, tt.want.code, res.StatusCode)
+
+			if tt.want.code == http.StatusOK {
+				var got Metrics
+				err := json.NewDecoder(res.Body).Decode(&got)
+				require.NoError(t, err)
+				assert.Equal(t, tt.input.ID, got.ID)
+				assert.Equal(t, tt.input.MType, got.MType)
+				if got.MType == "gauge" {
+					assert.NotNil(t, got.Value)
+					assert.InDelta(t, tt.want.value, *got.Value, 0.0001)
+				} else if got.MType == "counter" {
+					assert.NotNil(t, got.Delta)
+					assert.Equal(t, int64(tt.want.value), *got.Delta)
+				}
+			}
+		})
+	}
+}
 
 func TestUpdateMetric(t *testing.T) {
 	type want struct {
