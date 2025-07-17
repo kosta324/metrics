@@ -11,12 +11,34 @@ import (
 	"github.com/kosta324/metrics.git/internal/storage"
 )
 
+type DBChecker interface {
+	Ping() error
+}
+
 type Handler struct {
 	Repo storage.Repository
+	db DBChecker
 }
 
 func NewHandler(repo storage.Repository) *Handler {
 	return &Handler{Repo: repo}
+}
+
+func (h *Handler) WithDB(db DBChecker) {
+	h.db = db
+}
+
+func (h *Handler) PingDB(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		http.Error(w, "db not configured", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Ping(); err != nil {
+		http.Error(w, "db connection error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -25,6 +47,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Get("/value/{type}/{name}", h.GetMetric)
 	r.Get("/", h.ListMetrics)
+	r.Get("/ping", h.PingDB)
 }
 
 type Metrics struct {

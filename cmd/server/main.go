@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	"database/sql"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/handlers"
@@ -16,6 +17,7 @@ import (
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/kosta324/metrics.git/internal/zipper"
 	"go.uber.org/zap"
+	"github.com/kosta324/metrics.git/internal/db"
 )
 
 var (
@@ -23,6 +25,7 @@ var (
 	storeInterval = flag.Int("i", 300, "Store interval in seconds (0 = sync write)")
 	filePath      = flag.String("f", "/tmp/metrics-db.json", "File storage path")
 	restore       = flag.Bool("r", true, "Restore metrics from file on startup")
+	dbDSN         = flag.String("d", "", "PostgreSQL DSN")
 )
 
 var log zap.SugaredLogger
@@ -47,6 +50,9 @@ func parseEnvOverrides() {
 		if b, err := strconv.ParseBool(v); err == nil {
 			*restore = b
 		}
+	}
+	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+		*dbDSN = envDSN
 	}
 }
 
@@ -84,6 +90,16 @@ func main() {
 	}
 
 	handler := handlers.NewHandler(repo)
+
+	var sqlDB *sql.DB
+	if *dbDSN != "" {
+		sqlDB, err = db.New(*dbDSN)
+		if err != nil {
+			log.Fatalf("failed to connect to DB: %v", err)
+		}
+		log.Info("connected to database")
+		handler.WithDB(sqlDB)
+	}
 
 	r := chi.NewRouter()
 
