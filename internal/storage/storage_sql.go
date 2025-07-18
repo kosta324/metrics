@@ -3,11 +3,14 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"github.com/kosta324/metrics.git/internal/models"
 	_ "github.com/lib/pq"
+	"sync"
 )
 
 type SQLRepo struct {
 	db *sql.DB
+	mu sync.Mutex
 }
 
 func NewSQLStorage(dsn string) (*SQLRepo, error) {
@@ -41,6 +44,9 @@ func (r *SQLRepo) DB() *sql.DB {
 }
 
 func (r *SQLRepo) Add(metricType, name, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	switch metricType {
 	case "gauge":
 		_, err := r.db.Exec(`
@@ -62,6 +68,9 @@ func (r *SQLRepo) Add(metricType, name, value string) error {
 }
 
 func (r *SQLRepo) Get(metricType, name string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	var result string
 	switch metricType {
 	case "gauge":
@@ -76,6 +85,9 @@ func (r *SQLRepo) Get(metricType, name string) (string, error) {
 }
 
 func (r *SQLRepo) GetAll() map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	result := make(map[string]string)
 	rows, err := r.db.Query("SELECT name, value FROM gauges")
 	if err != nil {
@@ -108,4 +120,48 @@ func (r *SQLRepo) GetAll() map[string]string {
 	}
 
 	return result
+}
+
+func (r *SQLRepo) AddBatch(metrics []models.Metrics) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, m := range metrics {
+		switch m.MType {
+		case "gauge":
+			if m.Value == nil {
+				return fmt.Errorf("missing gauge value for metric %s", m.ID)
+			}
+			_, err := tx.Exec(`
+				INSERT INTO gauges (name, value)
+				VALUES ($1, $2)
+				ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+			`, m.ID, *m.Value)
+			if err != nil {
+				return err
+			}
+		case "counter":
+			if m.Delta == nil {
+				return fmt.Errorf("missing counter delta for metric %s", m.ID)
+			}
+			_, err := tx.Exec(`
+				INSERT INTO counters (name, delta)
+				VALUES ($1, $2)
+				ON CONFLICT (name) DO UPDATE SET delta = counters.delta + EXCLUDED.delta
+			`, m.ID, *m.Delta)
+			if err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown metric type: %s", m.MType)
+		}
+	}
+
+	return tx.Commit()
 }

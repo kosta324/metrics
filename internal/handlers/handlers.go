@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/kosta324/metrics.git/internal/models"
 	"github.com/kosta324/metrics.git/internal/storage"
 )
 
@@ -40,6 +41,7 @@ func (h *Handler) PingDB(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/update/", h.UpdateMetricJSON)
+	r.Post("/updates/", h.UpdateMetricsBatch)
 	r.Post("/value/", h.GetMetricJSON)
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Get("/value/{type}/{name}", h.GetMetric)
@@ -47,16 +49,65 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/ping", h.PingDB)
 }
 
-type Metrics struct {
-	ID    string   `json:"id"`
-	MType string   `json:"type"`
-	Delta *int64   `json:"delta,omitempty"`
-	Value *float64 `json:"value,omitempty"`
+func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var metrics []models.Metrics
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(body, &metrics); err != nil {
+		http.Error(w, "invalid JSON array", http.StatusBadRequest)
+		return
+	}
+
+	if len(metrics) == 0 {
+		http.Error(w, "empty metrics batch", http.StatusBadRequest)
+		return
+	}
+
+	if sqlRepo, ok := h.Repo.(*storage.SQLRepo); ok {
+		if err := sqlRepo.AddBatch(metrics); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		for _, m := range metrics {
+			switch m.MType {
+			case "gauge":
+				if m.Value == nil {
+					http.Error(w, "missing gauge value", http.StatusBadRequest)
+					return
+				}
+				if err := h.Repo.Add("gauge", m.ID, strconv.FormatFloat(*m.Value, 'f', -1, 64)); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			case "counter":
+				if m.Delta == nil {
+					http.Error(w, "missing counter delta", http.StatusBadRequest)
+					return
+				}
+				if err := h.Repo.Add("counter", m.ID, strconv.FormatInt(*m.Delta, 10)); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			default:
+				http.Error(w, "unknown metric type", http.StatusNotImplemented)
+				return
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var m Metrics
+	var m models.Metrics
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -115,7 +166,7 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var m Metrics
+	var m models.Metrics
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

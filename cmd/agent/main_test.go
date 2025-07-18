@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/kosta324/metrics.git/internal/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,7 +17,7 @@ func TestSendMetricJSON(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
 
-		var m Metrics
+		var m models.Metrics
 		err = json.Unmarshal(body, &m)
 		assert.NoError(t, err)
 
@@ -30,7 +31,7 @@ func TestSendMetricJSON(t *testing.T) {
 
 	t.Run("send gauge metric", func(t *testing.T) {
 		val := 123.456
-		metric := Metrics{
+		metric := models.Metrics{
 			ID:    "TestGauge",
 			MType: "gauge",
 			Value: &val,
@@ -40,7 +41,7 @@ func TestSendMetricJSON(t *testing.T) {
 
 	t.Run("send counter metric", func(t *testing.T) {
 		delta := int64(42)
-		metric := Metrics{
+		metric := models.Metrics{
 			ID:    "TestCounter",
 			MType: "counter",
 			Delta: &delta,

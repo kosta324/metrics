@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/kosta324/metrics.git/internal/models"
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,12 +21,12 @@ func TestUpdateMetricJSON(t *testing.T) {
 	}
 	tests := []struct {
 		name  string
-		input Metrics
+		input models.Metrics
 		want  want
 	}{
 		{
 			name: "update gauge via JSON",
-			input: Metrics{
+			input: models.Metrics{
 				ID:    "TestGauge",
 				MType: "gauge",
 				Value: func() *float64 { v := 123.456; return &v }(),
@@ -34,7 +35,7 @@ func TestUpdateMetricJSON(t *testing.T) {
 		},
 		{
 			name: "update counter via JSON",
-			input: Metrics{
+			input: models.Metrics{
 				ID:    "TestCounter",
 				MType: "counter",
 				Delta: func() *int64 { d := int64(42); return &d }(),
@@ -70,12 +71,12 @@ func TestGetMetricJSON(t *testing.T) {
 	}
 	tests := []struct {
 		name  string
-		input Metrics
+		input models.Metrics
 		want  want
 	}{
 		{
 			name: "get gauge via JSON",
-			input: Metrics{
+			input: models.Metrics{
 				ID:    "GaugeTwoDecimals",
 				MType: "gauge",
 			},
@@ -86,7 +87,7 @@ func TestGetMetricJSON(t *testing.T) {
 		},
 		{
 			name: "get existing counter",
-			input: Metrics{
+			input: models.Metrics{
 				ID:    "PollCount",
 				MType: "counter",
 			},
@@ -97,7 +98,7 @@ func TestGetMetricJSON(t *testing.T) {
 		},
 		{
 			name: "get non-existing metric",
-			input: Metrics{
+			input: models.Metrics{
 				ID:    "UnknownMetric",
 				MType: "gauge",
 			},
@@ -128,7 +129,7 @@ func TestGetMetricJSON(t *testing.T) {
 			assert.Equal(t, tt.want.code, res.StatusCode)
 
 			if tt.want.code == http.StatusOK {
-				var got Metrics
+				var got models.Metrics
 				err := json.NewDecoder(res.Body).Decode(&got)
 				require.NoError(t, err)
 				assert.Equal(t, tt.input.ID, got.ID)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/kosta324/metrics.git/internal/models"
 	"io"
 	"math/rand"
 	"net/http"
@@ -22,13 +23,6 @@ var (
 )
 
 var pollCount int64
-
-type Metrics struct {
-	ID    string   `json:"id"`
-	MType string   `json:"type"`
-	Delta *int64   `json:"delta,omitempty"`
-	Value *float64 `json:"value,omitempty"`
-}
 
 func main() {
 	flag.Parse()
@@ -97,24 +91,68 @@ func main() {
 	}()
 
 	for range reportTicker.C {
+		var metricsBatch []models.Metrics
 		for name, val := range metrics {
-			m := Metrics{
+			m := models.Metrics{
 				ID:    name,
 				MType: "gauge",
 				Value: &val,
 			}
-			sendMetricJSON(m)
+			metricsBatch = append(metricsBatch, m)
 		}
-		m := Metrics{
+		m := models.Metrics{
 			ID:    "PollCount",
 			MType: "counter",
 			Delta: &pollCount,
 		}
-		sendMetricJSON(m)
+		metricsBatch = append(metricsBatch, m)
+		sendMetricsBatch(metricsBatch)
 	}
 }
 
-func sendMetricJSON(m Metrics) {
+func sendMetricsBatch(metrics []models.Metrics) {
+	if len(metrics) == 0 {
+		return
+	}
+
+	body, err := json.Marshal(metrics)
+	if err != nil {
+		fmt.Printf("error creating request: %v\n", err)
+		return
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, err = gz.Write(body)
+	if err != nil {
+		fmt.Printf("error compressing: %v\n", err)
+		return
+	}
+	gz.Close()
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+*serverAddress+"/updates/", &buf)
+	if err != nil {
+		fmt.Printf("error creating request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("error sending metrics batch: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("server returned non-OK for batch: %d\n", resp.StatusCode)
+	}
+}
+
+func sendMetricJSON(m models.Metrics) {
 	body, err := json.Marshal(m)
 	if err != nil {
 		fmt.Printf("error creating request: %v\n", err)
