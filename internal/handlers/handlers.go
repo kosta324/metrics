@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,20 +12,16 @@ import (
 	"github.com/kosta324/metrics.git/internal/storage"
 )
 
-type DBChecker interface {
-	Ping() error
-}
-
 type Handler struct {
 	Repo storage.Repository
-	db DBChecker
+	db   *sql.DB
 }
 
 func NewHandler(repo storage.Repository) *Handler {
 	return &Handler{Repo: repo}
 }
 
-func (h *Handler) WithDB(db DBChecker) {
+func (h *Handler) SetDB(db *sql.DB) {
 	h.db = db
 }
 

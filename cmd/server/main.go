@@ -9,15 +9,14 @@ import (
 	"strconv"
 	"syscall"
 	"time"
-	"database/sql"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/handlers"
 	"github.com/kosta324/metrics.git/internal/logger"
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/kosta324/metrics.git/internal/zipper"
+	_ "github.com/lib/pq"
 	"go.uber.org/zap"
-	"github.com/kosta324/metrics.git/internal/db"
 )
 
 var (
@@ -67,38 +66,36 @@ func main() {
 
 	parseEnvOverrides()
 
-	repo := storage.NewMemStorage()
-
-	repo.SetFilePath(*filePath)
-
-	if *restore {
-		if err := repo.LoadFromFile(); err != nil {
-			log.Warnf("failed to load metrics from file: %v", err)
-		}
-	}
-
-	if *storeInterval > 0 {
-		go func() {
-			ticker := time.NewTicker(time.Duration(*storeInterval) * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				if err := repo.SaveToFile(); err != nil {
-					log.Errorf("failed to save metrics: %v", err)
-				}
-			}
-		}()
-	}
-
-	handler := handlers.NewHandler(repo)
-
-	var sqlDB *sql.DB
+	var repo storage.Repository
+	var sqlDB *storage.SQLRepo
 	if *dbDSN != "" {
-		sqlDB, err = db.New(*dbDSN)
+		sqlDB, err = storage.NewSQLStorage(*dbDSN)
 		if err != nil {
 			log.Fatalf("failed to connect to DB: %v", err)
 		}
-		log.Info("connected to database")
-		handler.WithDB(sqlDB)
+		repo = sqlDB
+	} else if *filePath != "" {
+		memRepo := storage.NewMemStorage()
+		memRepo.SetFilePath(*filePath)
+		if *restore {
+			if err := memRepo.LoadFromFile(); err != nil {
+				log.Warnf("failed to load metrics: %v", err)
+			}
+		}
+		repo = memRepo
+		if *storeInterval > 0 {
+			go func() {
+				ticker := time.NewTicker(time.Duration(*storeInterval) * time.Second)
+				defer ticker.Stop()
+				for range ticker.C {
+					if err := memRepo.SaveToFile(); err != nil {
+						log.Errorf("failed to save metrics: %v", err)
+					}
+				}
+			}()
+		}
+	} else {
+		repo = storage.NewMemStorage()
 	}
 
 	r := chi.NewRouter()
@@ -106,6 +103,10 @@ func main() {
 	r.Use(zipper.GzipMiddleware)
 	r.Use(logger.WithLogging(&log))
 
+	handler := handlers.NewHandler(repo)
+	if sqlDB != nil {
+		handler.SetDB(sqlDB.DB())
+	}
 	handler.RegisterRoutes(r)
 
 	server := &http.Server{
@@ -132,8 +133,11 @@ func main() {
 		log.Fatalf("Server shutdown failed: %v", zap.Error(err))
 	}
 
-	if err := repo.SaveToFile(); err != nil {
-		log.Errorf("failed to save metrics on shutdown: %v", err)
+	if memRepo, ok := repo.(*storage.MemStorage); ok && *filePath != "" {
+		if err := memRepo.SaveToFile(); err != nil {
+			log.Errorf("failed to save metrics on shutdown: %v", err)
+		}
 	}
+
 	log.Info("Server stopped gracefully")
 }

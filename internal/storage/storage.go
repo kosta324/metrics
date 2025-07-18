@@ -12,9 +12,13 @@ type Repository interface {
 	Add(metricType, name, value string) error
 	Get(metricType, name string) (string, error)
 	GetAll() map[string]string
-	SetFilePath(path string)
+}
+
+type FileBackedRepository interface {
+	Repository
 	SaveToFile() error
 	LoadFromFile() error
+	SetFilePath(path string)
 }
 
 type gauge float64
