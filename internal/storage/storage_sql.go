@@ -77,20 +77,34 @@ func (r *SQLRepo) Get(metricType, name string) (string, error) {
 
 func (r *SQLRepo) GetAll() map[string]string {
 	result := make(map[string]string)
-	rows, _ := r.db.Query("SELECT name, value FROM gauges")
+	rows, err := r.db.Query("SELECT name, value FROM gauges")
+	if err != nil {
+		return result
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var name, val string
-		rows.Scan(&name, &val)
-		result[name] = val
+		if err := rows.Scan(&name, &val); err == nil {
+			result[name] = val
+		}
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("error reading gauges: %v\n", err)
 	}
 
-	rows, _ = r.db.Query("SELECT name, delta FROM counters")
+	rows, err = r.db.Query("SELECT name, delta FROM counters")
+	if err != nil {
+		return result
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var name, val string
-		rows.Scan(&name, &val)
-		result[name] = val
+		if err := rows.Scan(&name, &val); err == nil {
+			result[name] = val
+		}
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("error reading counters: %v\n", err)
 	}
 
 	return result
