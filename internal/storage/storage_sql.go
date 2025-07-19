@@ -2,15 +2,28 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/kosta324/metrics.git/internal/models"
 	_ "github.com/lib/pq"
+	"strings"
 	"sync"
+	"time"
 )
 
 type SQLRepo struct {
 	db *sql.DB
 	mu sync.Mutex
+}
+
+func isRetriablePgError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return strings.HasPrefix(pgErr.Code, pgerrcode.ConnectionException)
+	}
+	return false
 }
 
 func NewSQLStorage(dsn string) (*SQLRepo, error) {
@@ -47,24 +60,33 @@ func (r *SQLRepo) Add(metricType, name, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	switch metricType {
-	case "gauge":
-		_, err := r.db.Exec(`
-            INSERT INTO gauges (name, value)
-            VALUES ($1, $2)
-            ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
-        `, name, value)
-		return err
-	case "counter":
-		_, err := r.db.Exec(`
-            INSERT INTO counters (name, delta)
-            VALUES ($1, $2)
-            ON CONFLICT (name) DO UPDATE SET delta = counters.delta + EXCLUDED.delta
-        `, name, value)
-		return err
-	default:
-		return fmt.Errorf("unsupported metric type: %s", metricType)
+	retries := []time.Duration{0, 1 * time.Second, 3 * time.Second, 5 * time.Second}
+	var err error
+	for attempt, delay := range retries {
+		if attempt > 0 {
+			time.Sleep(delay)
+		}
+		switch metricType {
+		case "gauge":
+			_, err = r.db.Exec(`
+				INSERT INTO gauges (name, value)
+				VALUES ($1, $2)
+				ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+			`, name, value)
+		case "counter":
+			_, err = r.db.Exec(`
+				INSERT INTO counters (name, delta)
+				VALUES ($1, $2)
+				ON CONFLICT (name) DO UPDATE SET delta = counters.delta + EXCLUDED.delta
+			`, name, value)
+		default:
+			return fmt.Errorf("unsupported metric type: %s", metricType)
+		}
+		if err == nil || !isRetriablePgError(err) {
+			break
+		}
 	}
+	return err
 }
 
 func (r *SQLRepo) Get(metricType, name string) (string, error) {

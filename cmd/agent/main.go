@@ -168,7 +168,8 @@ func sendMetricJSON(m models.Metrics) {
 	}
 	gz.Close()
 
-	req, err := http.NewRequest(http.MethodPost, "http://"+*serverAddress+"/update/", &buf)
+	url := "http://" + *serverAddress + "/update/"
+	req, err := http.NewRequest(http.MethodPost, url, &buf)
 	if err != nil {
 		fmt.Printf("error creating request: %v\n", err)
 		return
@@ -179,12 +180,28 @@ func sendMetricJSON(m models.Metrics) {
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+
+	var resp *http.Response
+	retries := []time.Duration{0, 1 * time.Second, 3 * time.Second, 5 * time.Second}
+	for attempt, delay := range retries {
+		if attempt > 0 {
+			time.Sleep(delay)
+		}
+		resp, err = client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			break
+		}
+		if err != nil {
+			fmt.Printf("attempt %d: error sending metric %s: %v\n", attempt+1, m.ID, err)
+		} else if resp != nil {
+			fmt.Printf("attempt %d: server returned status %d for %s\n", attempt+1, resp.StatusCode, m.ID)
+		}
+	}
 	if err != nil {
-		fmt.Printf("error sending metric %s: %v\n", m.ID, err)
+		fmt.Printf("final error sending metric %s: %v\n", m.ID, err)
 		return
 	}
-	defer resp.Body.Close()
 
 	var reader io.Reader = resp.Body
 
