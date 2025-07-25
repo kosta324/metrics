@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,28 +10,25 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/kosta324/metrics.git/internal/models"
 	"github.com/kosta324/metrics.git/internal/storage"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
-	Repo storage.Repository
-	db   *sql.DB
+	Repo   storage.Repository
+	logger *zap.SugaredLogger
 }
 
-func NewHandler(repo storage.Repository) *Handler {
-	return &Handler{Repo: repo}
-}
-
-func (h *Handler) SetDB(db *sql.DB) {
-	h.db = db
+func NewHandler(repo storage.Repository, log *zap.SugaredLogger) *Handler {
+	return &Handler{
+		Repo:   repo,
+		logger: log,
+	}
 }
 
 func (h *Handler) PingDB(w http.ResponseWriter, r *http.Request) {
-	if h.db == nil {
-		http.Error(w, "db not configured", http.StatusInternalServerError)
-		return
-	}
-	if err := h.db.Ping(); err != nil {
-		http.Error(w, "db connection error", http.StatusInternalServerError)
+	if err := h.Repo.Ping(); err != nil {
+		h.logger.Errorf("database ping failed: %v", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

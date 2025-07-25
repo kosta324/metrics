@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kosta324/metrics.git/internal/handlers"
 	"github.com/kosta324/metrics.git/internal/logger"
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/kosta324/metrics.git/internal/zipper"
-	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 )
 
@@ -34,23 +34,23 @@ func parseEnvOverrides() {
 	if len(flag.Args()) > 0 {
 		log.Fatalf("unknown arguments: %v", flag.Args())
 	}
-	if v := os.Getenv("ADDRESS"); v != "" {
+	if v, ok := os.LookupEnv("ADDRESS"); ok {
 		*addr = v
 	}
-	if v := os.Getenv("STORE_INTERVAL"); v != "" {
+	if v, ok := os.LookupEnv("STORE_INTERVAL"); ok {
 		if i, err := strconv.Atoi(v); err == nil {
 			*storeInterval = i
 		}
 	}
-	if v := os.Getenv("FILE_STORAGE_PATH"); v != "" {
+	if v, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok {
 		*filePath = v
 	}
-	if v := os.Getenv("RESTORE"); v != "" {
+	if v, ok := os.LookupEnv("RESTORE"); ok {
 		if b, err := strconv.ParseBool(v); err == nil {
 			*restore = b
 		}
 	}
-	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+	if envDSN, ok := os.LookupEnv("DATABASE_DSN"); ok {
 		*dbDSN = envDSN
 	}
 }
@@ -103,10 +103,7 @@ func main() {
 	r.Use(zipper.GzipMiddleware)
 	r.Use(logger.WithLogging(&log))
 
-	handler := handlers.NewHandler(repo)
-	if sqlDB != nil {
-		handler.SetDB(sqlDB.DB())
-	}
+	handler := handlers.NewHandler(repo, &log)
 	handler.RegisterRoutes(r)
 
 	server := &http.Server{

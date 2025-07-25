@@ -13,6 +13,7 @@ import (
 	"github.com/kosta324/metrics.git/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestUpdateMetricJSON(t *testing.T) {
@@ -45,7 +46,10 @@ func TestUpdateMetricJSON(t *testing.T) {
 	}
 
 	repo := storage.NewMemStorage()
-	h := NewHandler(repo)
+	logger, _ := zap.NewDevelopment()
+	defer logger.Sync()
+	log := logger.Sugar()
+	h := NewHandler(repo, log)
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
@@ -112,7 +116,10 @@ func TestGetMetricJSON(t *testing.T) {
 	repo := storage.NewMemStorage()
 	_ = repo.Add("gauge", "GaugeTwoDecimals", "603057.87")
 	_ = repo.Add("counter", "PollCount", "7")
-	h := NewHandler(repo)
+	logger, _ := zap.NewDevelopment()
+	defer logger.Sync()
+	log := logger.Sugar()
+	h := NewHandler(repo, log)
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
@@ -221,7 +228,10 @@ func TestUpdateMetric(t *testing.T) {
 	}
 
 	repo := storage.NewMemStorage()
-	h := NewHandler(repo)
+	logger, _ := zap.NewDevelopment()
+	defer logger.Sync()
+	log := logger.Sugar()
+	h := NewHandler(repo, log)
 
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
@@ -250,7 +260,10 @@ func setupRouterWithTestData() http.Handler {
 	_ = repo.Add("gauge", "GaugeThreeDecimals", "550386.837")
 	_ = repo.Add("counter", "PollCount", "7")
 
-	h := NewHandler(repo)
+	logger, _ := zap.NewDevelopment()
+	defer logger.Sync()
+	log := logger.Sugar()
+	h := NewHandler(repo, log)
 
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)

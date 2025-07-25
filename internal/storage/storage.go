@@ -13,6 +13,7 @@ type Repository interface {
 	Add(metricType, name, value string) error
 	Get(metricType, name string) (string, error)
 	GetAll() map[string]string
+	Ping() error
 }
 
 type FileBackedRepository interface {
@@ -166,5 +167,9 @@ func (ms *MemStorage) LoadFromFile() error {
 		}
 		ms.Counters[k] = counter(val)
 	}
+	return nil
+}
+
+func (ms *MemStorage) Ping() error {
 	return nil
 }

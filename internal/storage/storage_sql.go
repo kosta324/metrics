@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kosta324/metrics.git/internal/models"
-	_ "github.com/lib/pq"
 	"strings"
-	"sync"
 	"time"
 )
 
 type SQLRepo struct {
 	db *sql.DB
-	mu sync.Mutex
 }
 
 func isRetriablePgError(err error) bool {
@@ -27,7 +25,7 @@ func isRetriablePgError(err error) bool {
 }
 
 func NewSQLStorage(dsn string) (*SQLRepo, error) {
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open DB: %w", err)
 	}
@@ -57,9 +55,6 @@ func (r *SQLRepo) DB() *sql.DB {
 }
 
 func (r *SQLRepo) Add(metricType, name, value string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	retries := []time.Duration{0, 1 * time.Second, 3 * time.Second, 5 * time.Second}
 	var err error
 	for attempt, delay := range retries {
@@ -90,9 +85,6 @@ func (r *SQLRepo) Add(metricType, name, value string) error {
 }
 
 func (r *SQLRepo) Get(metricType, name string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	var result string
 	switch metricType {
 	case "gauge":
@@ -107,9 +99,6 @@ func (r *SQLRepo) Get(metricType, name string) (string, error) {
 }
 
 func (r *SQLRepo) GetAll() map[string]string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	result := make(map[string]string)
 	rows, err := r.db.Query("SELECT name, value FROM gauges")
 	if err != nil {
@@ -145,9 +134,6 @@ func (r *SQLRepo) GetAll() map[string]string {
 }
 
 func (r *SQLRepo) AddBatch(metrics []models.Metrics) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	tx, err := r.db.Begin()
 	if err != nil {
 		return err
@@ -186,4 +172,8 @@ func (r *SQLRepo) AddBatch(metrics []models.Metrics) error {
 	}
 
 	return tx.Commit()
+}
+
+func (r *SQLRepo) Ping() error {
+	return r.db.Ping()
 }
