@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/kosta324/metrics.git/internal/agent"
 	"github.com/kosta324/metrics.git/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestSendMetricsBatch(t *testing.T) {
@@ -20,7 +22,6 @@ func TestSendMetricsBatch(t *testing.T) {
 		assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 		assert.Equal(t, "/updates/", r.URL.Path)
 
-		// Распаковываем gzip
 		gr, err := gzip.NewReader(r.Body)
 		require.NoError(t, err)
 		defer gr.Close()
@@ -40,8 +41,12 @@ func TestSendMetricsBatch(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err, "failed to create logger")
+	defer logger.Sync()
+	log := logger.Sugar()
+
 	addr := ts.URL[len("http://"):]
-	serverAddress = &addr
 
 	t.Run("send gauge metric batch", func(t *testing.T) {
 		val := 123.456
@@ -50,7 +55,7 @@ func TestSendMetricsBatch(t *testing.T) {
 			MType: "gauge",
 			Value: &val,
 		}
-		err := sendMetricsBatch(context.Background(), []models.Metrics{metric})
+		err := agent.SendMetricsBatch(context.Background(), addr, []models.Metrics{metric}, log)
 		assert.NoError(t, err)
 	})
 
@@ -61,12 +66,12 @@ func TestSendMetricsBatch(t *testing.T) {
 			MType: "counter",
 			Delta: &delta,
 		}
-		err := sendMetricsBatch(context.Background(), []models.Metrics{metric})
+		err := agent.SendMetricsBatch(context.Background(), addr, []models.Metrics{metric}, log)
 		assert.NoError(t, err)
 	})
 
 	t.Run("send empty metric batch", func(t *testing.T) {
-		err := sendMetricsBatch(context.Background(), []models.Metrics{})
+		err := agent.SendMetricsBatch(context.Background(), addr, []models.Metrics{}, log)
 		assert.NoError(t, err)
 	})
 }

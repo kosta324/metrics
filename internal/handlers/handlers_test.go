@@ -46,7 +46,8 @@ func TestUpdateMetricJSON(t *testing.T) {
 	}
 
 	repo := storage.NewMemStorage()
-	logger, _ := zap.NewDevelopment()
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err, "failed to create logger")
 	defer logger.Sync()
 	log := logger.Sugar()
 	h := NewHandler(repo, log)
@@ -116,7 +117,8 @@ func TestGetMetricJSON(t *testing.T) {
 	repo := storage.NewMemStorage()
 	_ = repo.Add("gauge", "GaugeTwoDecimals", "603057.87")
 	_ = repo.Add("counter", "PollCount", "7")
-	logger, _ := zap.NewDevelopment()
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err, "failed to create logger")
 	defer logger.Sync()
 	log := logger.Sugar()
 	h := NewHandler(repo, log)
@@ -228,7 +230,8 @@ func TestUpdateMetric(t *testing.T) {
 	}
 
 	repo := storage.NewMemStorage()
-	logger, _ := zap.NewDevelopment()
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err, "failed to create logger")
 	defer logger.Sync()
 	log := logger.Sugar()
 	h := NewHandler(repo, log)
@@ -254,13 +257,14 @@ func TestUpdateMetric(t *testing.T) {
 	}
 }
 
-func setupRouterWithTestData() http.Handler {
+func setupRouterWithTestData(t *testing.T) http.Handler {
 	repo := storage.NewMemStorage()
 	_ = repo.Add("gauge", "GaugeTwoDecimals", "603057.87")
 	_ = repo.Add("gauge", "GaugeThreeDecimals", "550386.837")
 	_ = repo.Add("counter", "PollCount", "7")
 
-	logger, _ := zap.NewDevelopment()
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err, "failed to create logger")
 	defer logger.Sync()
 	log := logger.Sugar()
 	h := NewHandler(repo, log)
@@ -323,7 +327,7 @@ func TestGetMetrics(t *testing.T) {
 		},
 	}
 
-	router := setupRouterWithTestData()
+	router := setupRouterWithTestData(t)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
