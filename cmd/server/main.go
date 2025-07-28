@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kosta324/metrics.git/internal/handlers"
 	"github.com/kosta324/metrics.git/internal/logger"
 	"github.com/kosta324/metrics.git/internal/storage"
@@ -23,6 +24,7 @@ var (
 	storeInterval = flag.Int("i", 300, "Store interval in seconds (0 = sync write)")
 	filePath      = flag.String("f", "/tmp/metrics-db.json", "File storage path")
 	restore       = flag.Bool("r", true, "Restore metrics from file on startup")
+	dbDSN         = flag.String("d", "", "PostgreSQL DSN")
 )
 
 var log zap.SugaredLogger
@@ -32,21 +34,24 @@ func parseEnvOverrides() {
 	if len(flag.Args()) > 0 {
 		log.Fatalf("unknown arguments: %v", flag.Args())
 	}
-	if v := os.Getenv("ADDRESS"); v != "" {
+	if v, ok := os.LookupEnv("ADDRESS"); ok {
 		*addr = v
 	}
-	if v := os.Getenv("STORE_INTERVAL"); v != "" {
+	if v, ok := os.LookupEnv("STORE_INTERVAL"); ok {
 		if i, err := strconv.Atoi(v); err == nil {
 			*storeInterval = i
 		}
 	}
-	if v := os.Getenv("FILE_STORAGE_PATH"); v != "" {
+	if v, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok {
 		*filePath = v
 	}
-	if v := os.Getenv("RESTORE"); v != "" {
+	if v, ok := os.LookupEnv("RESTORE"); ok {
 		if b, err := strconv.ParseBool(v); err == nil {
 			*restore = b
 		}
+	}
+	if envDSN, ok := os.LookupEnv("DATABASE_DSN"); ok {
+		*dbDSN = envDSN
 	}
 }
 
@@ -61,35 +66,44 @@ func main() {
 
 	parseEnvOverrides()
 
-	repo := storage.NewMemStorage()
-
-	repo.SetFilePath(*filePath)
-
-	if *restore {
-		if err := repo.LoadFromFile(); err != nil {
-			log.Warnf("failed to load metrics from file: %v", err)
+	var repo storage.Repository
+	var sqlDB *storage.SQLRepo
+	if *dbDSN != "" {
+		sqlDB, err = storage.NewSQLStorage(*dbDSN)
+		if err != nil {
+			log.Fatalf("failed to connect to DB: %v", err)
 		}
-	}
-
-	if *storeInterval > 0 {
-		go func() {
-			ticker := time.NewTicker(time.Duration(*storeInterval) * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				if err := repo.SaveToFile(); err != nil {
-					log.Errorf("failed to save metrics: %v", err)
-				}
+		repo = sqlDB
+	} else if *filePath != "" {
+		memRepo := storage.NewMemStorage()
+		memRepo.SetFilePath(*filePath)
+		if *restore {
+			if err := memRepo.LoadFromFile(); err != nil {
+				log.Warnf("failed to load metrics: %v", err)
 			}
-		}()
+		}
+		repo = memRepo
+		if *storeInterval > 0 {
+			go func() {
+				ticker := time.NewTicker(time.Duration(*storeInterval) * time.Second)
+				defer ticker.Stop()
+				for range ticker.C {
+					if err := memRepo.SaveToFile(); err != nil {
+						log.Errorf("failed to save metrics: %v", err)
+					}
+				}
+			}()
+		}
+	} else {
+		repo = storage.NewMemStorage()
 	}
-
-	handler := handlers.NewHandler(repo)
 
 	r := chi.NewRouter()
 
 	r.Use(zipper.GzipMiddleware)
 	r.Use(logger.WithLogging(&log))
 
+	handler := handlers.NewHandler(repo, &log)
 	handler.RegisterRoutes(r)
 
 	server := &http.Server{
@@ -116,8 +130,11 @@ func main() {
 		log.Fatalf("Server shutdown failed: %v", zap.Error(err))
 	}
 
-	if err := repo.SaveToFile(); err != nil {
-		log.Errorf("failed to save metrics on shutdown: %v", err)
+	if memRepo, ok := repo.(*storage.MemStorage); ok && *filePath != "" {
+		if err := memRepo.SaveToFile(); err != nil {
+			log.Errorf("failed to save metrics on shutdown: %v", err)
+		}
 	}
+
 	log.Info("Server stopped gracefully")
 }

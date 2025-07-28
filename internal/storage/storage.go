@@ -6,21 +6,28 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 )
 
 type Repository interface {
 	Add(metricType, name, value string) error
 	Get(metricType, name string) (string, error)
 	GetAll() map[string]string
-	SetFilePath(path string)
+	Ping() error
+}
+
+type FileBackedRepository interface {
+	Repository
 	SaveToFile() error
 	LoadFromFile() error
+	SetFilePath(path string)
 }
 
 type gauge float64
 type counter int64
 
 type MemStorage struct {
+	mu       sync.RWMutex
 	Gauges   map[string]gauge
 	Counters map[string]counter
 	filePath string
@@ -34,6 +41,9 @@ func NewMemStorage() *MemStorage {
 }
 
 func (ms *MemStorage) Add(metricType, name, value string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
 	switch metricType {
 	case "gauge":
 		val, err := strconv.ParseFloat(value, 64)
@@ -54,6 +64,9 @@ func (ms *MemStorage) Add(metricType, name, value string) error {
 }
 
 func (ms *MemStorage) Get(metricType, name string) (string, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
 	switch metricType {
 	case "gauge":
 		val, ok := ms.Gauges[name]
@@ -73,6 +86,9 @@ func (ms *MemStorage) Get(metricType, name string) (string, error) {
 }
 
 func (ms *MemStorage) GetAll() map[string]string {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
 	result := make(map[string]string)
 
 	for k, v := range ms.Gauges {
@@ -89,6 +105,9 @@ func (ms *MemStorage) SetFilePath(path string) {
 }
 
 func (ms *MemStorage) SaveToFile() error {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
 	if ms.filePath == "" {
 		return errors.New("file path not set")
 	}
@@ -114,6 +133,9 @@ func (ms *MemStorage) SaveToFile() error {
 }
 
 func (ms *MemStorage) LoadFromFile() error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
 	if ms.filePath == "" {
 		return errors.New("file path not set")
 	}
@@ -145,5 +167,9 @@ func (ms *MemStorage) LoadFromFile() error {
 		}
 		ms.Counters[k] = counter(val)
 	}
+	return nil
+}
+
+func (ms *MemStorage) Ping() error {
 	return nil
 }
